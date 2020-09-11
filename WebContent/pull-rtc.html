@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>RTC Pull</title>
+  <meta charset="utf-8">
+  <meta content="width=device-width, initial-scale=1" name="viewport">
+  <link href='https://cloud.webrtc.qq.com/httpdemo/css/bootstrap.css' rel="stylesheet">
+  <link href='https://cloud.webrtc.qq.com/httpdemo/css/style.css' rel='stylesheet'>
+  <style>
+      #remote-video-wrap div{max-width:800px; display: inline-block; padding:10px;}
+      #remote-video-wrap video{max-width:800px; display: inline-block; padding:10px} 
+  </style>
+</head>
+<body>
+    <div id="input-container" class="container">
+    
+        <div class="login-box">
+          <div class="form-group">
+              <label for="streamurl">拉流地址:</label>
+              <input class="form-control" id="streamurl" type="text" value="webrtc://xxxxxx" /> //webrtc类型的流地址
+          </div>
+          <button  style="float: left;margin:10px;" type="button" onclick="pullStream()" id="pullFun">拉流</button>
+          <button  style="float: left;margin:10px;" type="button" onclick="stopStream()">停止拉流</button>
+          <!-- <button  style="float: left;margin:10px;" type="button" onclick="refreshStream()">刷新</button>
+          <button  style="float: left;margin:10px;" type="button" onclick="opennewpage()">打开新的页面</button> -->
+          <!-- <a href="https://local.rtc.qq.com/live/" target="_top">打开新的页面</a> -->
+        </div>
+      </div>
+    
+
+    <div id="video-section" style="float:left;margin:195px 0px 0px 75px;">
+            <div id="remote-video-wrap">
+    
+            </div>
+        </div>
+      </div>
+
+      <script>
+        window._tx_webrtc_enable  = true;
+        // delete window.RTCPeerConnection;
+        // delete window.webkitRTCPeerConnection;
+        // delete window.RTCIceGatherer;
+      </script>
+
+  <script src="https://unpkg.com/flyio/dist/fly.min.js"></script>
+  <script src="https://cloud.webrtc.qq.com/httpdemo/js/jquery.min.js"></script>
+  <script src="https://cloud.webrtc.qq.com/httpdemo/js/adapter.js"></script> <!-- 很有必要 兼容浏览器 -->
+  <script src="http://res.wx.qq.com/open/js/jweixin-1.0.0.js"></script>  <!-- 用于ios端视频不能自动播放 -->
+  <script>
+      
+function getStreamId(url){
+    //var url = "webrtc://domain/path/stream_id[?txSecret=xxx&txTime=xxx]";
+    var parseStreamid = /^(?:webrtc:\/\/)(?:[0-9.\-A-Za-z_]+)(?:\/)(?:[0-9.\-A-Za-z_]+)(?:\/)([^?#]*)(?:\?*)(?:[^?#]*)/;
+    var result = parseStreamid.exec(url);
+    if(result)
+        return result[1];
+    return null;
+}
+
+function createVideoElement(id) {
+    var videoDiv = document.createElement("div");
+    videoDiv.innerHTML = `<video id="${id}" autoplay unmuted playsinline controls></video>`; //width="480" height="320"
+    document.querySelector("#remote-video-wrap").appendChild(videoDiv);
+    
+    return document.getElementById(id);
+}
+
+function onAddStream(e){
+    console.log(`onAddStream, streamId:${e.streamId}`, e.stream);
+    var streamId = e.streamId;
+    var video = document.getElementById(streamId);
+    if(!video){
+        video = createVideoElement(streamId);
+    }
+
+    video.srcObject = e.stream;
+    //video.muted = true
+    video.autoplay = true
+    video.playsinline = true
+    var playPromise = video.play();
+    if(playPromise){
+        playPromise.then(() => {
+            //此处监听到webrtc流地址可以播放 
+            console.log(`play ok!`);
+        }).catch(() => {
+            //此处可做其他类型的流地址切换
+            //webrtc地址不可播放
+            console.log(`play failed!`);
+        });
+    }
+}
+
+var streamUrl;
+var svrSig;
+var peerConnection;
+
+function pullStream(){
+
+    var clientInfo = "clientinfo_test";
+    var sessionId = "sessionId_Test";
+    streamUrl = $("#streamurl").val();
+    var streamId = getStreamId(streamUrl);
+    var video = document.getElementById(streamId);
+    if(!video){
+        video = createVideoElement(streamId);
+    }
+
+    var config = {
+        iceServers: [],
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        tcpCandidatePolicy: "disable",
+        IceTransportsType: "nohost",
+        sdpSemantics: 'unified-plan'
+    };
+
+    var optional = {
+        optional: [{
+            DtlsSrtpKeyAgreement: true
+        }]
+    };
+
+    var offerSdpOption = {
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+        voiceActivityDetection: false
+      };
+
+    peerConnection = new RTCPeerConnection(config, optional);
+    peerConnection.onicecandidate = function(e) {
+        console.log("peerConnection.onicecandidate:", e);
+    };
+    peerConnection.onaddstream = function(e) {
+        console.log("peerConnection.onaddstream");
+    };
+    peerConnection.onremovestream = function(e) {
+        console.log("peerConnection.onremovestream");
+    };
+    peerConnection.ontrack = function(e) {
+        console.log("peerConnection.ontrack, kind:" + e.track.kind + ",track.id:" + e.track.id);
+
+        var track = e.track;
+        if(!peerConnection.stream){
+            peerConnection.streamId = streamId;
+            peerConnection.stream = new MediaStream();
+            peerConnection.stream.addTrack(track);
+
+            onAddStream(peerConnection);
+        } else{
+            peerConnection.stream.addTrack(track);
+            console.log("track.lenght:" + peerConnection.stream.getTracks().length);
+        }
+    };
+    peerConnection.onconnectionstatechange = function(e) {
+        console.log("onconnectionstatechange", e);
+    }
+    peerConnection.oniceconnectionstatechange = function(e) {
+        console.log("peerConnection.oniceconnectionstatechange: " + JSON.stringify(e), e);
+    };
+    peerConnection.onicegatheringstatechange = function(e) {
+        console.log("peerConnection.onicegatheringstatechange : " + e.target.iceGatheringState, e);
+    };
+    peerConnection.onsignalingstatechange = function(e) {
+        console.log("peerConnection.onsignalingstatechange : " + peerConnection.signalingState, e);
+    };
+    peerConnection.onnegotiationneeded = function(e) {
+        console.log("peerConnection.onnegotiationneeded", e);
+    };
+
+
+    peerConnection.createOffer(offerSdpOption).then(function(offer) {
+        peerConnection.setLocalDescription(offer);
+        var url = "https://webrtc.liveplay.myqcloud.com/webrtc/v1/pullstream"; 
+        var reqBody = {
+            streamurl: streamUrl,
+            sessionid:  sessionId,
+            clientinfo: clientInfo,
+            localsdp: offer
+        };
+
+         $.ajax({
+             type: "post",
+             url: url,
+             data: JSON.stringify(reqBody),
+             //contentType: "application/json; charset=utf-8",
+             dataType: "json",
+             success: pullStreamRes,
+             crossDomain: true
+         });
+        //fly.interceptors.request.use((request) => {
+         //   request.headers['Content-Type'] ='application/json';
+         //   request.headers['Access-Control-Allow-Origin'] ='*';
+         //   request.headers['Access-Control-Allow-Credentials'] ='true';
+        //})
+        //fly.post(url, JSON.stringify(reqBody)).then(pullStreamRes).catch(function(error){
+         //   console.log("fly post err:", error);
+        //});
+
+        function pullStreamRes(data){
+            console.log("pullStreamRes:", data);
+        //    data = data.data;
+            var errCode = data.errcode;
+            var errMsg = data.errmsg;
+            if(errCode != 0){
+                console.log(`pull stream failed!errCode:${errCode}, errmsg:${errMsg}`);
+                return;
+            }
+
+            var remoteSdp = data.remotesdp;
+            svrSig = data.svrsig;
+
+            console.log(`svrSig:${svrSig}`);
+
+            peerConnection.setRemoteDescription(
+                new RTCSessionDescription(remoteSdp),
+                function(){
+                    console.log("setRemoteSdp succ!");
+                },
+                function(e){
+                    console.log("setRemoteSdp failed, exception = " + e.message);
+                }
+            );
+        }
+    }).catch(function(reason) {
+        console.log('create offer failed : reason = ' + reason);
+      });
+}
+
+
+function stopStream(){
+    var url = "https://webrtc.liveplay.myqcloud.com/webrtc/v1/stopstream";
+    var reqBody = {
+        streamurl: streamUrl,
+        svrsig:  svrSig
+    };
+
+     $.ajax({
+         type: "post",
+         url: url,
+         data: JSON.stringify(reqBody),
+         //contentType: "application/json; charset=utf-8",
+         dataType: "json",
+         success: stopStreamRes,
+        crossDomain: true
+     });
+
+    //fly.interceptors.request.use((request) => {
+    //    request.headers['Content-Type'] ='application/json';
+    //    request.headers['Access-Control-Allow-Origin'] ='*';
+    //    request.headers['Access-Control-Allow-Credentials'] ='true';
+    //})
+   // fly.post(url, JSON.stringify(reqBody)).then(stopStreamRes).catch(function(error){
+    //    console.log("fly post err:", error);
+    //});
+
+    function stopStreamRes(data){
+        console.log(`stopStreamRes:`, data);
+        //data = data.data;
+        var errCode = data.errcode;
+        var errMsg = data.errmsg;
+        if(errCode != 0){
+            console.log(`pull stream failed!errCode:${errCode}, errmsg:${errMsg}`);
+        }
+
+        peerConnection.close();
+        var streamId = getStreamId(streamUrl);
+        var videoNode = document.getElementById(streamId);
+        if (videoNode) {
+            document.getElementById(streamId).parentElement.removeChild(videoNode);
+            console.log(`RemoveStream, streamUrl:${streamUrl}`);
+        } else{
+            console.log(`RemoveStream, streamUrl:${streamUrl} not exist`);
+        }
+    }
+    
+}
+
+//此处用来调取微信console面板  用于开发审查（很有必要）
+function createVConsole() {
+    var scriptEle = document.createElement("script");
+    scriptEle.src = '//sqimg.qq.com/expert_qq/vConsole/vconsole.min.js';
+    document.body.appendChild(scriptEle)
+    scriptEle.onload = function(){
+        window.vConsole = new VConsole();
+    }
+};
+
+createVConsole();
+
+//此处作用：因ios端视频禁止自动播放  故写此代码用来调取视频播放
+let video = document.querySelectorAll("video")[0];
+  document.addEventListener("WeixinJSBridgeReady", function () {
+    pullStream();  //拉流（相当于手动操作拉流按钮，因实际项目中没有此按钮来手动拉流）
+     video.play();
+}, false);
+  </script>
+  </body>
+</html>
